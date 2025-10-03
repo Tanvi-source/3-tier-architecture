@@ -1,4 +1,5 @@
 version: '3.9'
+
 services:
   db:
     image: mysql:8.0
@@ -14,6 +15,8 @@ services:
       - db_data:/var/lib/mysql
 
   backend:
+    # image field added so remote build produces known image name
+    image: local/3tier-backend:latest
     build: ./backend
     container_name: flask_app
     environment:
@@ -27,6 +30,7 @@ services:
       - db
 
   nginx:
+    image: local/3tier-nginx:latest
     build: ./nginx
     container_name: nginx_proxy
     ports:
