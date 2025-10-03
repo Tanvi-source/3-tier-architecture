@@ -1,0 +1,78 @@
+- name: Push built images to Docker Hub and deploy to Kubernetes
+  hosts: "{{ docker_host | default('docker_host') }}"
+  become: yes
+  vars:
+    repo_path: /opt/3-tier-docker
+    k8s_render_path: "{{ repo_path }}/k8s-rendered"
+  tasks:
+    - name: Ensure git is installed
+      apt:
+        name: git
+        state: present
+        update_cache: yes
+
+    - name: Ensure repo exists on docker host
+      git:
+        repo: 'https://github.com/Tanvi-source/3-tier-docker.git'
+        dest: "{{ repo_path }}"
+        version: main
+        force: yes
+
+    - name: Docker login to Docker Hub
+      shell: "echo '{{ docker_pass }}' | docker login -u '{{ docker_user }}' --password-stdin"
+      args:
+        executable: /bin/bash
+      no_log: true
+
+    - name: Tag backend image for Docker Hub
+      shell: >
+        docker tag local/3tier-backend:latest {{ docker_repo }}/backend:{{ image_tag }}
+      args:
+        executable: /bin/bash
+
+    - name: Tag nginx image for Docker Hub
+      shell: >
+        docker tag local/3tier-nginx:latest {{ docker_repo }}/nginx:{{ image_tag }}
+      args:
+        executable: /bin/bash
+
+    - name: Push backend image to Docker Hub
+      shell: docker push {{ docker_repo }}/backend:{{ image_tag }}
+      args:
+        executable: /bin/bash
+
+    - name: Push nginx image to Docker Hub
+      shell: docker push {{ docker_repo }}/nginx:{{ image_tag }}
+      args:
+        executable: /bin/bash
+
+    - name: Create k8s rendered dir
+      file:
+        path: "{{ k8s_render_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Render k8s templates with Docker repo & tag
+      template:
+        src: "{{ item }}"
+        dest: "{{ k8s_render_path }}/{{ item | basename | regex_replace('\\.j2$','') }}"
+      loop: "{{ lookup('fileglob', repo_path + '/k8s/*.j2', wantlist=True) }}"
+      vars:
+        docker_repo_render: "{{ docker_repo }}"
+        image_tag_render: "{{ image_tag }}"
+
+    - name: Ensure kubectl is installed (Ubuntu)
+      apt:
+        name: kubectl
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Apply k8s manifests
+      shell: kubectl apply -f {{ k8s_render_path }}
+      args:
+        chdir: "{{ k8s_render_path }}"
+      environment:
+        KUBECONFIG: "{{ lookup('env','HOME') + '/.kube/config' }}"
+
+
